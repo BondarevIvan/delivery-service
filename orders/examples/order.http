@@ -1,0 +1,7 @@
+@token = {{$dotenv TOKEN}}
+@order_id = 2
+@requestId = 7f4c2b1a-0010
+
+GET http://localhost:8000/order/{{order_id}}
+Authorization: Bearer {{token}}
+RequestId: {{requestId}}

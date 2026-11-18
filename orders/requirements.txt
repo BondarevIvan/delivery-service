@@ -1,0 +1,7 @@
+fastapi
+uvicorn[standard]
+PyJWT
+asyncpg
+yoyo-migrations
+psycopg2-binary
+phonenumbers

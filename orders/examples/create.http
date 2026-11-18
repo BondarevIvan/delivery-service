@@ -1,0 +1,29 @@
+@token = {{$dotenv TOKEN}}
+
+POST http://localhost:8000/order/new
+Content-Type: application/json
+Authorization: Bearer {{token}}
+RequestId: 7f4c2b1a-0001
+
+{
+    "receipt": {
+        "positions": [
+            {
+                "position": 1,
+                "comment": "без лука"
+            },
+            {
+                "position": 2
+            }
+        ]
+    },
+    "customer": {
+        "name": "Иван",
+        "telephone": "+7(999)-888-99-99",
+        "address": "Москва",
+        "comment": "побыстрее"
+    },
+    "meta": {
+        "date": "2026-11-18T12:00:00"
+    }
+}

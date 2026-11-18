@@ -1,0 +1,77 @@
+@token = {{$dotenv TOKEN}}
+@order_id = 1
+@deliver_id = 77
+
+### Взять заказ в работу
+POST http://localhost:8000/order/start
+Content-Type: application/json
+Authorization: Bearer {{token}}
+RequestId: 7f4c2b1a-0021
+
+{
+    "id": {{order_id}}
+}
+
+### Отметить заказ готовым
+POST http://localhost:8000/order/ready
+Content-Type: application/json
+Authorization: Bearer {{token}}
+RequestId: 7f4c2b1a-0022
+
+{
+    "id": {{order_id}}
+}
+
+### Привязать доставщика
+POST http://localhost:8000/order/attach
+Content-Type: application/json
+Authorization: Bearer {{token}}
+RequestId: 7f4c2b1a-0023
+
+{
+    "order_id": {{order_id}},
+    "deliver_id": {{deliver_id}}
+}
+
+### Передать заказ доставщику
+POST http://localhost:8000/order/pickup
+Content-Type: application/json
+Authorization: Bearer {{token}}
+RequestId: 7f4c2b1a-0024
+
+{
+    "order_id": {{order_id}}
+}
+
+### Завершить заказ
+POST http://localhost:8000/order/finish
+Content-Type: application/json
+Authorization: Bearer {{token}}
+RequestId: 7f4c2b1a-0025
+
+{
+    "order_id": {{order_id}},
+    "meta": {
+        "date": "2026-11-18T13:00:00"
+    }
+}
+
+### Отменить заказ
+POST http://localhost:8000/order/cancel
+Content-Type: application/json
+Authorization: Bearer {{token}}
+RequestId: 7f4c2b1a-0026
+
+{
+    "id": {{order_id}}
+}
+
+### Отметить неудачную доставку
+POST http://localhost:8000/order/fail
+Content-Type: application/json
+Authorization: Bearer {{token}}
+RequestId: 7f4c2b1a-0027
+
+{
+    "order_id": {{order_id}}
+}
