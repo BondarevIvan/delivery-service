@@ -16,6 +16,33 @@ services:
       timeout: 5s
       retries: 5
 
+  coordinator:
+    build:
+      context: ./coordinator
+      dockerfile: Dockerfile
+    container_name: manual-coordinator
+    environment:
+      ORDERS_URL: http://api:8000
+    ports:
+      - "7777:7777"
+    depends_on:
+      db:
+        condition: service_healthy
+      api:
+        condition: service_started
+
+  migrate:
+    build:
+      context: ./orders
+      dockerfile: Dockerfile
+    container_name: manual-migrate
+    command: ["yoyo", "apply", "--batch"]
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@db:5432/app
+    depends_on:
+      db:
+        condition: service_healthy
+
   api:
     build:
       context: ./orders
@@ -30,6 +57,25 @@ services:
     depends_on:
       db:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+  console:
+    build:
+      context: ./console
+      dockerfile: Dockerfile
+    container_name: manual-console
+    environment:
+      ORDERS_URL: http://api:8000
+      COORDINATOR_URL: http://coordinator:7777
+      AUTO_DISPATCH_INTERVAL: "3"
+    env_file:
+      - coordinator/.env
+    ports:
+      - "8888:8888"
+    depends_on:
+      - api
+      - coordinator
 
 volumes:
   pgdata:

@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Курьер</title>
+<link rel="stylesheet" href="/static/role.css">
+</head>
+<body>
+<header>
+  <h1 id="title">Курьер</h1>
+  <nav>
+    <a href="/kitchen">Кухня</a>
+    <a href="/assembly">Сборка</a>
+    <a href="/courier">Курьеры</a>
+    <a href="/">Консоль</a>
+  </nav>
+</header>
+<main>
+  <div class="bar">
+    <span id="status"></span>
+    <button id="arrive">Я на точке</button>
+    <button id="take" class="ghost">Взять заказ (авто)</button>
+    <button id="leave" class="ghost">Уйти</button>
+    <button id="refresh" class="ghost">Обновить</button>
+  </div>
+  <div id="msg" class="msg"></div>
+  <div id="body"></div>
+</main>
+<script src="/static/role.js"></script>
+<script>
+const CID = Number((location.pathname.match(/\/courier\/(\d+)/) || [])[1]);
+const REFRESH_MS = 4000;
+
+let working = false;
+
+function customerBlock(o) {
+  const c = o.customer || {};
+  return `<div class="grid">
+    <div class="kv"><div class="k">Клиент</div><div class="v">${UI.esc(c.name || "—")}</div></div>
+    <div class="kv"><div class="k">Телефон</div><div class="v">${UI.esc(c.telephone || "—")}</div></div>
+    <div class="kv"><div class="k">Адрес</div><div class="v">${UI.esc(c.address || "—")}</div></div>
+  </div>`;
+}
+
+function activeCard(o) {
+  let buttons = "";
+  if (o.status === "assigned") buttons = `<button data-pickup="${o.order_id}">Забрал заказ</button>`;
+  else if (o.status === "picked_up") buttons = `<button data-finish="${o.order_id}">Доставлен</button>`;
+  buttons += ` <button class="danger" data-fail="${o.order_id}">Провал</button>`;
+  return `<div class="card">
+    <div class="head"><b>Заказ #${o.order_id}</b> ${UI.badge(o.status)}
+      <span class="muted">${UI.dt(o.created_at)}</span></div>
+    ${customerBlock(o)}
+    <div class="foot">${buttons}</div>
+  </div>`;
+}
+
+async function load() {
+  const body = UI.$("body");
+  if (!CID) { body.innerHTML = '<div class="empty">неверный id курьера</div>'; return; }
+  try {
+    const [couriers, orders] = await Promise.all([
+      UI.couriers(), UI.orders(["ready", "assigned", "picked_up"]),
+    ]);
+    const me = couriers.find((c) => c.courier_id === CID);
+    const available = !!(me && me.available);
+    const active = orders.find((o) => o.status !== "ready" && UI.courierOf(o) === CID);
+    const hasActive = !!active;
+
+    UI.$("title").textContent = `Курьер #${CID}${me && me.name ? " · " + me.name : ""}`;
+    UI.$("status").innerHTML = hasActive
+      ? '<span class="badge" style="background:var(--accent)22;color:var(--accent)">в работе</span>'
+      : available
+        ? '<span class="badge" style="background:var(--ok)22;color:var(--ok)">на точке · свободен</span>'
+        : '<span class="badge" style="background:var(--muted)22;color:var(--muted)">не на точке</span>';
+
+    UI.$("arrive").style.display = available ? "none" : "";
+    UI.$("take").style.display = available && !hasActive ? "" : "none";
+    UI.$("leave").style.display = available && !hasActive ? "" : "none";
+
+    body.innerHTML = active
+      ? activeCard(active)
+      : (available
+          ? '<div class="empty">Вы на точке. Готовый заказ назначится автоматически.</div>'
+          : '<div class="empty">После доставки отметьтесь «Я на точке», чтобы получать заказы.</div>');
+    bind();
+  } catch (e) {
+    body.innerHTML = `<div class="empty">${UI.esc(e.message)}</div>`;
+  }
+}
+
+async function takeNow() {
+  if (working || !CID) return;
+  working = true;
+  try {
+    const assign = await UI.api(`/api/coordinator/auto/courier/${CID}/next-order`, "POST");
+    const orderId = assign.status === 200 ? assign.data.order_id : null;
+    if (!orderId) { UI.setMsg("Нет готовых заказов", "err"); return; }
+    if (await UI.post("/api/orders/order/attach", { order_id: orderId, deliver_id: CID },
+                     `Назначен заказ #${orderId}`)) await load();
+  } finally {
+    working = false;
+  }
+}
+
+function bind() {
+  document.querySelectorAll("[data-pickup]").forEach((b) => {
+    b.onclick = async () => {
+      if (await UI.post("/api/orders/order/pickup", { order_id: Number(b.dataset.pickup) }, "Заказ забран")) load();
+    };
+  });
+  document.querySelectorAll("[data-finish]").forEach((b) => {
+    b.onclick = async () => {
+      const body = { order_id: Number(b.dataset.finish), meta: { date: new Date().toISOString() } };
+      if (await UI.post("/api/orders/order/finish", body, "Доставлено")) load();
+    };
+  });
+  document.querySelectorAll("[data-fail]").forEach((b) => {
+    b.onclick = async () => {
+      if (await UI.post("/api/orders/order/fail", { order_id: Number(b.dataset.fail) }, "Отмечен провал")) load();
+    };
+  });
+}
+
+UI.$("arrive").onclick = async () => {
+  const r = await UI.setAvailable(CID, true);
+  if (r.status >= 200 && r.status < 300) {
+    UI.setMsg("Вы на точке — заказ назначится автоматически", "ok");
+    await load();
+    takeNow();
+  } else {
+    UI.setMsg((r.data && r.data.detail) || ("HTTP " + r.status), "err");
+  }
+};
+UI.$("leave").onclick = async () => {
+  const r = await UI.setAvailable(CID, false);
+  if (r.status >= 200 && r.status < 300) { UI.setMsg("Вы отметились как ушедший", "ok"); await load(); }
+  else UI.setMsg((r.data && r.data.detail) || ("HTTP " + r.status), "err");
+};
+UI.$("take").onclick = takeNow;
+UI.$("refresh").onclick = load;
+
+load();
+setInterval(load, REFRESH_MS);
+</script>
+</body>
+</html>

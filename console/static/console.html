@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Консоль оператора</title>
+<style>
+  :root {
+    --bg:#0f1117; --panel:#171a23; --panel2:#1e2230; --line:#2a2f3d; --text:#e6e9f0;
+    --muted:#98a0b3; --accent:#5b8cff; --ok:#35c47b; --warn:#e0a83a; --err:#e0574f; --info:#5b8cff;
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text);
+    font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; }
+  header { padding:16px 24px; border-bottom:1px solid var(--line); background:var(--panel);
+    display:flex; align-items:center; gap:16px; flex-wrap:wrap; }
+  header h1 { font-size:18px; margin:0; font-weight:650; }
+  .tabs { display:flex; gap:6px; margin-left:auto; }
+  .tabs button { background:transparent; border:1px solid var(--line); color:var(--muted);
+    padding:8px 14px; border-radius:8px; cursor:pointer; font-size:14px; }
+  .tabs button.on { background:var(--accent); color:#fff; border-color:var(--accent); }
+  main { max-width:1080px; margin:0 auto; padding:22px; }
+  .panel { display:none; } .panel.on { display:block; }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:12px;
+    padding:18px 20px; margin-bottom:18px; }
+  .card h2 { font-size:13px; text-transform:uppercase; letter-spacing:.06em; color:var(--muted);
+    margin:0 0 14px; font-weight:600; }
+  textarea, input { width:100%; background:var(--panel2); border:1px solid var(--line);
+    color:var(--text); border-radius:8px; padding:9px 11px; font-size:13.5px;
+    font-family:ui-monospace,Menlo,Consolas,monospace; }
+  textarea:focus, input:focus { outline:none; border-color:var(--accent); }
+  textarea { min-height:170px; resize:vertical; }
+  label { display:block; font-size:12.5px; color:var(--muted); margin:0 0 6px; }
+  .row { display:flex; gap:10px; flex-wrap:wrap; align-items:flex-end; margin-top:10px; }
+  .row > div { flex:1; min-width:140px; }
+  button { background:var(--accent); color:#fff; border:0; border-radius:8px; padding:9px 15px;
+    font-size:13.5px; font-weight:600; cursor:pointer; }
+  button:hover { filter:brightness(1.08); }
+  button.ghost { background:transparent; border:1px solid var(--line); color:var(--text); }
+  button.warn { background:#4a3a12; color:#f0c869; border:1px solid #6b5620; }
+  button.danger { background:#3a1d1c; color:#ff9d95; border:1px solid #6b2a26; }
+  .out { margin-top:12px; background:var(--panel2); border:1px solid var(--line); border-radius:8px;
+    padding:11px 12px; font-family:ui-monospace,Menlo,Consolas,monospace; font-size:12.5px;
+    white-space:pre-wrap; word-break:break-word; min-height:20px; }
+  .out.err { color:#ffb4ae; border-color:#6b2a26; background:#261615; }
+  .out.ok { color:#b7f0cf; border-color:#245e3d; background:#12261b; }
+  .badge { padding:3px 10px; border-radius:999px; font-size:12.5px; font-weight:600; }
+  table { width:100%; border-collapse:collapse; }
+  th,td { text-align:left; padding:8px; border-bottom:1px solid var(--line); font-size:14px; }
+  th { color:var(--muted); font-size:12px; text-transform:uppercase; letter-spacing:.04em; }
+  td.num,th.num { text-align:right; }
+  .timeline { margin-left:6px; }
+  .event { position:relative; padding:0 0 16px 26px; border-left:2px solid var(--line); }
+  .event:last-child { border-left-color:transparent; padding-bottom:0; }
+  .event::before { content:""; position:absolute; left:-7px; top:3px; width:12px; height:12px;
+    border-radius:50%; background:var(--info); border:2px solid var(--panel); }
+  .event .tm { color:var(--muted); font-size:13px; margin-left:8px; }
+  details summary { cursor:pointer; color:var(--muted); font-size:12.5px; }
+  pre { background:var(--panel2); border:1px solid var(--line); border-radius:8px; padding:10px;
+    overflow:auto; font-size:12.5px; margin:8px 0 0; }
+  .hint { color:var(--muted); font-size:12.5px; margin-top:8px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Консоль оператора</h1>
+  <div class="tabs">
+    <button id="tab-orders" class="on">Заказы</button>
+    <button id="tab-coordinator">Координатор</button>
+  </div>
+</header>
+
+<main>
+  <!-- ЗАКАЗЫ -->
+  <section id="panel-orders" class="panel on">
+    <div class="card">
+      <h2>Новый заказ</h2>
+      <label>Тело запроса (receipt, customer, meta)</label>
+      <textarea id="newOrder"></textarea>
+      <div class="row">
+        <div style="flex:0 0 auto"><button id="create">Создать заказ</button></div>
+      </div>
+      <div id="createOut" class="out"></div>
+    </div>
+
+    <div class="card">
+      <h2>Действия с заказом</h2>
+      <div class="row">
+        <div><label>ID заказа</label><input id="actionOrderId" type="number" min="1" placeholder="1"></div>
+        <div><label>ID курьера (для attach)</label><input id="courierId" type="number" min="1" placeholder="1"></div>
+        <div><label>ID блюда (для dish ready)</label><input id="dishId" type="number" min="1" placeholder="1"></div>
+      </div>
+      <div class="row">
+        <button data-action="start" class="ghost">start</button>
+        <button data-action="ready" class="ghost">ready</button>
+        <button data-action="dishready" class="ghost">блюдо готово</button>
+        <button data-action="attach" class="ghost">attach</button>
+        <button data-action="pickup" class="ghost">pickup</button>
+        <button data-action="finish">finish</button>
+        <button data-action="fail" class="warn">fail</button>
+        <button data-action="cancel" class="danger">cancel</button>
+        <button data-action="view" class="ghost">показать</button>
+      </div>
+      <div id="actionOut" class="out"></div>
+    </div>
+
+    <div id="orderView"></div>
+  </section>
+
+  <!-- КООРДИНАТОР -->
+  <section id="panel-coordinator" class="panel">
+    <div class="card">
+      <h2>Контекст ресторана</h2>
+      <label>AlgoRequest (context + priority_algo + distribution_algo)</label>
+      <textarea id="ctx"></textarea>
+      <div class="row">
+        <button data-handle="kitchen/next-order" class="ghost">кухня: заказ</button>
+        <button data-handle="kitchen/next-dish" class="ghost">кухня: блюдо</button>
+        <button data-handle="assembly/next-order" class="ghost">сборка: заказ</button>
+        <button data-handle="courier/next-order" class="ghost">курьер: заказ</button>
+        <button data-handle="coordinate">всё: /coordinate</button>
+      </div>
+      <div class="row">
+        <button id="autoPlan">Авто-план из orders</button>
+      </div>
+      <div class="hint">Контекст можно менять вручную; ответ координатора появится ниже.
+        Кнопка «Авто-план из orders» сама запрашивает заказы и курьеров и вызывает
+        <code>/auto/coordinate</code> — контекст в форме ей не нужен.</div>
+      <div id="coordOut" class="out"></div>
+    </div>
+  </section>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+
+const NEW_ORDER = {
+  receipt: { positions: [ { position: 1, comment: "без лука" }, { position: 2 } ] },
+  customer: { name: "Иван", telephone: "+7(999)-888-99-99", address: "Москва, Тверская 1", comment: "побыстрее" },
+  meta: { date: "2026-11-18T12:00:00" }
+};
+const CONTEXT = {
+  context: {
+    free_couriers: [1, 2],
+    waiting_orders: [
+      { order_id: 10, created_at: "2026-11-19T10:00:00Z", dish_ids: [100, 101, 103] },
+      { order_id: 11, created_at: "2026-11-19T10:05:00Z", dish_ids: [102] }
+    ],
+    cooking_dishes: [ { dish_id: 100, order_id: 10 } ],
+    ready_dishes: [ { dish_id: 101, order_id: 10 } ],
+    ready_orders: [ { order_id: 9, created_at: "2026-11-19T09:30:00Z", courier_id: null } ]
+  },
+  priority_algo: { name: "fifo" },
+  distribution_algo: { name: "fifo" }
+};
+
+const STATUS = {
+  new:["Новый","var(--info)"], started:["Готовится","var(--warn)"], ready:["Готов","var(--ok)"],
+  assigned:["Курьер назначен","var(--accent)"], picked_up:["В пути","var(--accent)"],
+  delivered:["Доставлен","var(--ok)"], failed:["Не доставлен","var(--err)"], cancelled:["Отменён","var(--err)"]
+};
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, c =>
+  ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[c]));
+const dt = (iso) => { const d = new Date(iso); return isNaN(d) ? iso : d.toLocaleString("ru-RU"); };
+const money = (v) => Number(v).toLocaleString("ru-RU",{minimumFractionDigits:2,maximumFractionDigits:2}) + " ₽";
+const badge = (s) => { const [l,c] = STATUS[s] || [s,"var(--muted)"];
+  return `<span class="badge" style="background:${c}22;color:${c}">${esc(l)}</span>`; };
+
+function showOut(el, res) {
+  const ok = res.status >= 200 && res.status < 300;
+  el.className = "out " + (ok ? "ok" : "err");
+  el.textContent = `HTTP ${res.status}\n` + JSON.stringify(res.data, null, 2);
+}
+async function call(path, method = "POST", body) {
+  const resp = await fetch(path, {
+    method,
+    headers: body ? { "Content-Type": "application/json" } : {},
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  let data; try { data = await resp.json(); } catch (e) { data = {}; }
+  return { status: resp.status, data };
+}
+function parse(text, out) {
+  try { return JSON.parse(text); }
+  catch (e) { out.className = "out err"; out.textContent = "Некорректный JSON: " + e.message; return null; }
+}
+
+/* --- заказы --- */
+$("create").addEventListener("click", async () => {
+  const body = parse($("newOrder").value, $("createOut"));
+  if (!body) return;
+  showOut($("createOut"), await call("/api/orders/order/new", "POST", body));
+});
+
+document.querySelectorAll("[data-action]").forEach(btn => {
+  btn.addEventListener("click", async () => {
+    const action = btn.dataset.action;
+    const el = $("actionOut");
+    const id = Number($("actionOrderId").value);
+    if (!id) { el.className = "out err"; el.textContent = "Укажи id заказа"; return; }
+    if (action === "view") {
+      const res = await call(`/api/orders/order/${id}`, "GET");
+      showOut(el, res);
+      if (res.status === 200) renderOrder(res.data); else $("orderView").innerHTML = "";
+      return;
+    }
+    let path, body;
+    if (action === "attach") {
+      const courier = Number($("courierId").value);
+      if (!courier) { el.className = "out err"; el.textContent = "Укажи id курьера"; return; }
+      path = "order/attach"; body = { order_id: id, deliver_id: courier };
+    } else if (action === "finish") {
+      path = "order/finish"; body = { order_id: id, meta: { date: new Date().toISOString() } };
+    } else if (action === "pickup" || action === "fail") {
+      path = `order/${action}`; body = { order_id: id };
+    } else if (action === "dishready") {
+      const dish = Number($("dishId").value);
+      if (!dish) { el.className = "out err"; el.textContent = "Укажи id блюда"; return; }
+      path = "order/dish/ready"; body = { order_id: id, dish_id: dish };
+    } else {
+      path = `order/${action}`; body = { id };
+    }
+    const res = await call(`/api/orders/${path}`, "POST", body);
+    showOut(el, res);
+    if (res.status < 300) {
+      const view = await call(`/api/orders/order/${id}`, "GET");
+      if (view.status === 200) renderOrder(view.data);
+    }
+  });
+});
+
+function renderOrder(o) {
+  const total = (o.positions || []).reduce((s, p) => s + Number(p.cost), 0);
+  const positions = (o.positions || []).map(p => `<tr><td>${p.position}</td>
+    <td>${esc(p.name)}${p.ready ? ' <span class="badge" style="background:var(--ok)22;color:var(--ok)">готово</span>' : ""}</td>
+    <td>${p.comment ? esc(p.comment) : ""}</td><td class="num">${money(p.cost)}</td></tr>`).join("")
+    || `<tr><td colspan="4" style="color:var(--muted)">нет позиций</td></tr>`;
+  const history = (o.history || []).map(ev => {
+    const keys = Object.keys(ev.meta || {});
+    const courier = ev.courier_id != null ? ` · курьер #${ev.courier_id}` : "";
+    const meta = keys.length ? `<details><summary>meta (${keys.length})</summary>
+      <pre>${esc(JSON.stringify(ev.meta, null, 2))}</pre></details>` : "";
+    return `<div class="event"><div>${badge(ev.status)}<span class="tm">${dt(ev.created_at)}${courier}</span></div>
+      ${meta}</div>`;
+  }).join("") || `<div style="color:var(--muted)">история пуста</div>`;
+  const c = o.customer || {};
+  $("orderView").innerHTML = `
+    <div class="card"><h2>Заказ #${o.order_id} ${badge(o.status)}</h2>
+      <table><tbody>
+        <tr><th>Создан</th><td>${dt(o.created_at)}</td></tr>
+        <tr><th>Клиент</th><td>${esc(c.name)} · ${esc(c.telephone)}</td></tr>
+        <tr><th>Адрес</th><td>${esc(c.address || "—")}</td></tr>
+        <tr><th>Комментарий</th><td>${esc(c.comment || "—")}</td></tr>
+      </tbody></table>
+    </div>
+    <div class="card"><h2>Состав</h2>
+      <table><thead><tr><th>Позиция</th><th>Блюдо</th><th>Комментарий</th><th class="num">Цена</th></tr></thead>
+      <tbody>${positions}</tbody>
+      <tfoot><tr><td colspan="3"></td><td class="num">${money(total)}</td></tr></tfoot></table>
+    </div>
+    <div class="card"><h2>История статусов</h2><div class="timeline">${history}</div></div>`;
+}
+
+/* --- координатор --- */
+document.querySelectorAll("[data-handle]").forEach(btn => {
+  btn.addEventListener("click", async () => {
+    const body = parse($("ctx").value, $("coordOut"));
+    if (!body) return;
+    showOut($("coordOut"), await call(`/api/coordinator/${btn.dataset.handle}`, "POST", body));
+  });
+});
+
+/* авто-ручка: контекст собирается на стороне координатора из orders */
+$("autoPlan").addEventListener("click", async () => {
+  showOut($("coordOut"), await call("/api/coordinator/auto/coordinate", "POST"));
+});
+
+/* --- табы --- */
+function tab(name) {
+  $("panel-orders").classList.toggle("on", name === "orders");
+  $("panel-coordinator").classList.toggle("on", name === "coordinator");
+  $("tab-orders").classList.toggle("on", name === "orders");
+  $("tab-coordinator").classList.toggle("on", name === "coordinator");
+}
+$("tab-orders").addEventListener("click", () => tab("orders"));
+$("tab-coordinator").addEventListener("click", () => tab("coordinator"));
+
+$("newOrder").value = JSON.stringify(NEW_ORDER, null, 2);
+$("ctx").value = JSON.stringify(CONTEXT, null, 2);
+</script>
+</body>
+</html>

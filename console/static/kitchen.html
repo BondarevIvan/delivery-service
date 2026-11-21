@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Кухня</title>
+<link rel="stylesheet" href="/static/role.css">
+</head>
+<body>
+<header>
+  <h1>Кухня</h1>
+  <nav>
+    <a href="/kitchen" class="on">Кухня</a>
+    <a href="/assembly">Сборка</a>
+    <a href="/courier">Курьеры</a>
+    <a href="/">Консоль</a>
+  </nav>
+</header>
+<main>
+  <div class="bar">
+    <button id="refresh">Обновить</button>
+    <span class="muted">Порядок приготовления: сверху — первый.</span>
+  </div>
+  <div id="msg" class="msg"></div>
+  <div id="list"></div>
+</main>
+<script src="/static/role.js"></script>
+<script>
+async function dishNames(queue) {
+  const ids = [...new Set(queue.map((d) => d.order_id))];
+  const orders = await Promise.all(ids.map((id) => UI.api(`/api/orders/order/${id}`)));
+  const names = {};
+  for (const o of orders) {
+    if (o.status !== 200) continue;
+    for (const p of o.data.positions || []) names[`${o.data.order_id}:${p.position}`] = p.name;
+  }
+  return names;
+}
+
+function row(index, d, names) {
+  const name = names[`${d.order_id}:${d.dish_id}`] || `блюдо #${d.dish_id}`;
+  return `<div class="card">
+    <div class="head">
+      <span class="badge" style="background:var(--accent)22;color:var(--accent)">${index}</span>
+      <b>${UI.esc(name)}</b>
+      <span class="muted">заказ #${d.order_id}</span>
+      <span style="margin-left:auto"></span>
+      <button data-order="${d.order_id}" data-dish="${d.dish_id}">готово</button>
+    </div>
+  </div>`;
+}
+
+async function load() {
+  const list = UI.$("list");
+  list.innerHTML = '<div class="empty">загрузка…</div>';
+  try {
+    const resp = await UI.api("/api/coordinator/auto/kitchen/dishes", "POST");
+    if (resp.status !== 200) throw new Error((resp.data && resp.data.detail) || ("HTTP " + resp.status));
+    const queue = resp.data.dishes || [];
+    if (!queue.length) { list.innerHTML = '<div class="empty">нет блюд к приготовлению</div>'; return; }
+    const names = await dishNames(queue);
+    list.innerHTML = queue.map((d, i) => row(i + 1, d, names)).join("");
+    document.querySelectorAll("[data-dish]").forEach((b) => {
+      b.onclick = async () => {
+        const body = { order_id: Number(b.dataset.order), dish_id: Number(b.dataset.dish) };
+        if (await UI.post("/api/orders/order/dish/ready", body, "Блюдо отмечено готовым")) load();
+      };
+    });
+  } catch (e) {
+    list.innerHTML = `<div class="empty">${UI.esc(e.message)}</div>`;
+  }
+}
+
+UI.$("refresh").onclick = load;
+load();
+setInterval(load, 5000);
+</script>
+</body>
+</html>

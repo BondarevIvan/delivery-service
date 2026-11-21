@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Сборка</title>
+<link rel="stylesheet" href="/static/role.css">
+</head>
+<body>
+<header>
+  <h1>Сборка</h1>
+  <nav>
+    <a href="/kitchen">Кухня</a>
+    <a href="/assembly" class="on">Сборка</a>
+    <a href="/courier">Курьеры</a>
+    <a href="/">Консоль</a>
+  </nav>
+</header>
+<main>
+  <div class="bar">
+    <button id="refresh">Обновить</button>
+    <button id="hint" class="ghost">Подсказка: следующий заказ</button>
+    <span id="hintOut" class="muted"></span>
+  </div>
+  <div id="msg" class="msg"></div>
+  <h2 class="muted" style="font-size:13px;text-transform:uppercase;letter-spacing:.06em">Готовы к сборке</h2>
+  <div id="ready"></div>
+  <h2 class="muted" style="font-size:13px;text-transform:uppercase;letter-spacing:.06em">Ещё готовятся</h2>
+  <div id="waiting"></div>
+</main>
+<script src="/static/role.js"></script>
+<script>
+function renderReady(order) {
+  const dishes = order.positions.map((p) =>
+    `<div class="dish"><span class="name">#${p.position} ${UI.esc(p.name)}</span>
+      <span class="tag ok">готово</span></div>`).join("");
+  return `<div class="card">
+    <div class="head"><b>Заказ #${order.order_id}</b> ${UI.badge(order.status)}
+      <span class="muted">${UI.dt(order.created_at)} · ${order.positions.length} блюд</span></div>
+    <div class="dishes">${dishes}</div>
+    <div class="foot"><button data-assemble="${order.order_id}">Собрать заказ</button></div>
+  </div>`;
+}
+
+function renderWaiting(order) {
+  const readyCount = order.positions.filter((p) => p.ready).length;
+  return `<div class="card">
+    <div class="head"><b>Заказ #${order.order_id}</b> ${UI.badge(order.status)}
+      <span class="muted">готово ${readyCount} из ${order.positions.length}</span></div>
+  </div>`;
+}
+
+async function load() {
+  const readyEl = UI.$("ready"), waitEl = UI.$("waiting");
+  readyEl.innerHTML = '<div class="empty">загрузка…</div>';
+  waitEl.innerHTML = "";
+  try {
+    const orders = await UI.orders(["new", "started"]);
+    const isReady = (o) => o.positions.length > 0 && o.positions.every((p) => p.ready);
+    const ready = orders.filter(isReady);
+    const waiting = orders.filter((o) => !isReady(o) && o.positions.some((p) => p.ready));
+    readyEl.innerHTML = ready.length ? ready.map(renderReady).join("")
+      : '<div class="empty">нет заказов, готовых к сборке</div>';
+    waitEl.innerHTML = waiting.length ? waiting.map(renderWaiting).join("")
+      : '<div class="empty">—</div>';
+    document.querySelectorAll("[data-assemble]").forEach((b) => {
+      b.onclick = async () => {
+        if (await UI.post("/api/orders/order/ready", { id: Number(b.dataset.assemble) }, "Заказ собран"))
+          load();
+      };
+    });
+  } catch (e) {
+    readyEl.innerHTML = `<div class="empty">${UI.esc(e.message)}</div>`;
+  }
+}
+
+UI.$("refresh").onclick = load;
+UI.$("hint").onclick = async () => {
+  const r = await UI.api("/api/coordinator/auto/assembly/next-order", "POST");
+  UI.$("hintOut").textContent = r.status === 200
+    ? "следующий по приоритету: " + (r.data.order_id ?? "—")
+    : "ошибка";
+};
+load();
+</script>
+</body>
+</html>

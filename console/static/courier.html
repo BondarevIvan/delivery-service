@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Курьеры</title>
+<link rel="stylesheet" href="/static/role.css">
+</head>
+<body>
+<header>
+  <h1>Курьеры</h1>
+  <nav>
+    <a href="/kitchen">Кухня</a>
+    <a href="/assembly">Сборка</a>
+    <a href="/courier" class="on">Курьеры</a>
+    <a href="/">Консоль</a>
+  </nav>
+</header>
+<main>
+  <div class="bar"><button id="refresh">Обновить</button></div>
+  <div id="msg" class="msg"></div>
+  <h2 class="muted" style="font-size:13px;text-transform:uppercase;letter-spacing:.06em">Курьеры</h2>
+  <div id="couriers"></div>
+  <h2 class="muted" style="font-size:13px;text-transform:uppercase;letter-spacing:.06em">Ожидают курьера</h2>
+  <div id="ready"></div>
+</main>
+<script src="/static/role.js"></script>
+<script>
+function courierCard(c, busyOrder) {
+  const status = busyOrder
+    ? `<span class="badge" style="background:var(--accent)22;color:var(--accent)">в работе · заказ #${busyOrder}</span>`
+    : c.available
+      ? '<span class="badge" style="background:var(--ok)22;color:var(--ok)">на точке · свободен</span>'
+      : '<span class="badge" style="background:var(--muted)22;color:var(--muted)">не на точке</span>';
+  return `<div class="card">
+    <div class="head"><b>Курьер #${c.courier_id}</b> ${status}
+      <span class="muted">${UI.esc(c.name || "")}</span></div>
+    <div class="foot"><a href="/courier/${c.courier_id}"><button>Открыть страницу курьера</button></a></div>
+  </div>`;
+}
+
+function readyCard(o) {
+  const c = o.customer || {};
+  return `<div class="card">
+    <div class="head"><b>Заказ #${o.order_id}</b> ${UI.badge(o.status)}
+      <span class="muted">${UI.dt(o.created_at)}</span></div>
+    <div class="grid">
+      <div class="kv"><div class="k">Адрес</div><div class="v">${UI.esc(c.address || "—")}</div></div>
+      <div class="kv"><div class="k">Клиент</div><div class="v">${UI.esc(c.name || "—")}</div></div>
+    </div>
+    <div class="muted">Назначается автоматически со страницы свободного курьера.</div>
+  </div>`;
+}
+
+async function load() {
+  const cel = UI.$("couriers"), rel = UI.$("ready");
+  cel.innerHTML = '<div class="empty">загрузка…</div>';
+  rel.innerHTML = "";
+  try {
+    const [couriers, orders] = await Promise.all([
+      UI.couriers(), UI.orders(["ready", "assigned", "picked_up"]),
+    ]);
+    const activeByCourier = {};
+    for (const o of orders) {
+      const cid = UI.courierOf(o);
+      if (cid && o.status !== "ready") activeByCourier[cid] = o.order_id;
+    }
+    cel.innerHTML = couriers.length
+      ? couriers.map((c) => courierCard(c, activeByCourier[c.courier_id])).join("")
+      : '<div class="empty">нет курьеров</div>';
+    const ready = orders.filter((o) => o.status === "ready");
+    rel.innerHTML = ready.length ? ready.map(readyCard).join("")
+      : '<div class="empty">нет заказов, ожидающих курьера</div>';
+  } catch (e) {
+    cel.innerHTML = `<div class="empty">${UI.esc(e.message)}</div>`;
+  }
+}
+
+UI.$("refresh").onclick = load;
+load();
+</script>
+</body>
+</html>

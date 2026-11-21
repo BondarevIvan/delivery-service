@@ -3,11 +3,15 @@ import json
 from utils.database import db
 from utils.phone import normalize_phone
 from models import (
+    CourierAvailableResponse,
+    CourierRef,
     Customer,
+    DishReadyResponse,
     OrderDish,
     OrderMeta,
     OrderRequest,
     OrderResponse,
+    OrderSummary,
     StatusEvent,
     StatusResponse,
 )
@@ -26,7 +30,7 @@ class CourierNotFound(Exception):
 
 
 ALLOWED_TRANSITIONS = {
-    "new": {"started", "cancelled"},
+    "new": {"started", "ready", "cancelled"},
     "started": {"ready", "cancelled"},
     "ready": {"assigned", "cancelled"},
     "assigned": {"picked_up", "cancelled", "failed"},
@@ -158,7 +162,7 @@ async def get_order(order_id: int) -> OrderResponse | None:
 
     dishes = await db.fetch(
         """
-        SELECT od.dish_id, d.name, od.cost
+        SELECT od.dish_id, d.name, od.cost, od.ready_at
         FROM order_dishes od
         JOIN dishes d ON d.dish_id = od.dish_id
         WHERE od.order_id = $1
@@ -217,11 +221,146 @@ async def get_order(order_id: int) -> OrderResponse | None:
                 name=dish["name"],
                 cost=dish["cost"],
                 comment=comments.get(dish["dish_id"]),
+                ready=dish["ready_at"] is not None,
             )
             for dish in dishes
         ],
         status=history[-1].status if history else "new",
         history=history,
+    )
+
+
+_LIST_ORDERS_SQL = """
+SELECT o.order_id,
+       o.created_at,
+       COALESCE(ls.status, 'new') AS status,
+       ac.courier_id,
+       COALESCE(d.dish_ids, ARRAY[]::bigint[]) AS dish_ids,
+       COALESCE(d.ready_dish_ids, ARRAY[]::bigint[]) AS ready_dish_ids
+FROM orders o
+LEFT JOIN LATERAL (
+    SELECT status FROM order_statuses s
+    WHERE s.order_id = o.order_id
+    ORDER BY s.created_at DESC
+    LIMIT 1
+) ls ON TRUE
+LEFT JOIN LATERAL (
+    SELECT courier_id FROM order_statuses s
+    WHERE s.order_id = o.order_id AND s.courier_id IS NOT NULL
+    ORDER BY s.created_at DESC
+    LIMIT 1
+) ac ON TRUE
+LEFT JOIN LATERAL (
+    SELECT array_agg(od.dish_id ORDER BY od.dish_id) AS dish_ids,
+           array_agg(od.dish_id ORDER BY od.dish_id)
+               FILTER (WHERE od.ready_at IS NOT NULL) AS ready_dish_ids
+    FROM order_dishes od WHERE od.order_id = o.order_id
+) d ON TRUE
+WHERE $1::text[] IS NULL OR COALESCE(ls.status, 'new') = ANY($1::text[])
+ORDER BY o.created_at, o.order_id
+"""
+
+
+async def fetch_orders(statuses: list[str] | None = None) -> list[OrderSummary]:
+    """
+    Возвращает карточки заказов (для листинга и сборки контекста)
+    """
+    rows = await db.fetch(_LIST_ORDERS_SQL, statuses)
+    return [
+        OrderSummary(
+            order_id=row["order_id"],
+            created_at=row["created_at"],
+            status=row["status"],
+            courier_id=row["courier_id"],
+            dish_ids=list(row["dish_ids"] or []),
+            ready_dish_ids=list(row["ready_dish_ids"] or []),
+        )
+        for row in rows
+    ]
+
+
+async def fetch_couriers() -> list[CourierRef]:
+    """
+    Возвращает список курьеров с признаком явки на точку
+    """
+    rows = await db.fetch(
+        "SELECT courier_id, name, available FROM couriers ORDER BY courier_id"
+    )
+    return [
+        CourierRef(courier_id=row["courier_id"], name=row["name"], available=row["available"])
+        for row in rows
+    ]
+
+
+async def set_courier_available(courier_id: int, available: bool) -> CourierAvailableResponse:
+    """
+    Отмечает курьера свободным (явился на точку) или недоступным
+    """
+    row = await db.fetchrow(
+        """
+        UPDATE couriers SET available = $2
+        WHERE courier_id = $1
+        RETURNING courier_id, available
+        """,
+        courier_id,
+        available,
+    )
+    if row is None:
+        raise CourierNotFound(courier_id)
+    return CourierAvailableResponse(courier_id=row["courier_id"], available=row["available"])
+
+
+DISH_READY_STATUSES = {"new", "started"}
+
+
+async def mark_dish_ready(order_id: int, dish_id: int) -> DishReadyResponse:
+    """
+    Отмечает блюдо заказа готовым (идемпотентно). Доступно в статусах new/started.
+    """
+    async with db.transaction() as connection:
+        current_status = await connection.fetchval(
+            """
+            SELECT s.status FROM order_statuses s
+            WHERE s.order_id = $1
+            ORDER BY s.created_at DESC
+            LIMIT 1
+            """,
+            order_id,
+        )
+        if current_status is None:
+            raise OrderNotFound(order_id)
+        if current_status not in DISH_READY_STATUSES:
+            raise InvalidTransition(
+                f"Нельзя отметить блюдо готовым в статусе: {current_status}"
+            )
+
+        belongs = await connection.fetchval(
+            "SELECT 1 FROM order_dishes WHERE order_id = $1 AND dish_id = $2",
+            order_id,
+            dish_id,
+        )
+        if belongs is None:
+            raise ValueError(f"Блюдо {dish_id} не входит в заказ {order_id}")
+
+        ready_at = await connection.fetchval(
+            """
+            UPDATE order_dishes SET ready_at = COALESCE(ready_at, now())
+            WHERE order_id = $1 AND dish_id = $2
+            RETURNING ready_at
+            """,
+            order_id,
+            dish_id,
+        )
+        pending = await connection.fetchval(
+            "SELECT count(*) FROM order_dishes WHERE order_id = $1 AND ready_at IS NULL",
+            order_id,
+        )
+
+    return DishReadyResponse(
+        order_id=order_id,
+        dish_id=dish_id,
+        ready_at=ready_at,
+        all_ready=pending == 0,
     )
 
 
@@ -310,12 +449,18 @@ async def attach_courier(
     deliver_id: int,
     request_id: str,
 ) -> StatusResponse:
-    return await _change_status(
+    result = await _change_status(
         order_id,
         "assigned",
         request_id,
         courier_id=deliver_id,
     )
+    # курьер забрал заказ и уехал с точки — снимаем доступность
+    await db.execute(
+        "UPDATE couriers SET available = FALSE WHERE courier_id = $1",
+        deliver_id,
+    )
+    return result
 
 
 async def pickup_order(order_id: int, request_id: str) -> StatusResponse:

@@ -1,14 +1,21 @@
 from contextlib import asynccontextmanager
+from pathlib import Path
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Request, status
-from fastapi.responses import JSONResponse
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, status
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
 from models import (
     AttachRequest,
+    CourierAvailableRequest,
+    CourierAvailableResponse,
+    CourierListResponse,
+    DishReadyRequest,
+    DishReadyResponse,
     FinishRequest,
     NewOrderResponse,
     OrderIdRequest,
+    OrderListResponse,
     OrderRefRequest,
     OrderRequest,
     OrderResponse,
@@ -22,10 +29,14 @@ from utils import (
     cancel_order,
     create_order,
     fail_order,
+    fetch_couriers,
+    fetch_orders,
     finish_order,
     get_order,
+    mark_dish_ready,
     pickup_order,
     ready_order,
+    set_courier_available,
     start_order,
     read_payload,
     db,
@@ -40,6 +51,16 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(lifespan=lifespan)
+
+ADMIN_PAGE = Path(__file__).parent / "static" / "admin.html"
+
+
+@app.get("/admin", include_in_schema=False)
+async def admin_page() -> FileResponse:
+    """
+    Страница админки: просмотр заказа и истории статусов
+    """
+    return FileResponse(ADMIN_PAGE)
 
 
 async def check_admin(
@@ -108,6 +129,41 @@ async def read_order(
     return order
 
 
+@app.get("/orders", response_model=OrderListResponse)
+async def list_orders(
+    request_id: str = Depends(get_request_id),
+    _=Depends(check_admin),
+    status_filter: list[str] | None = Query(default=None, alias="status"),
+) -> OrderListResponse:
+    """
+    Возвращает список заказов с текущим статусом и блюдами (для координатора)
+    """
+    return OrderListResponse(orders=await fetch_orders(status_filter))
+
+
+@app.get("/couriers", response_model=CourierListResponse)
+async def list_couriers(
+    request_id: str = Depends(get_request_id),
+    _=Depends(check_admin),
+) -> CourierListResponse:
+    """
+    Возвращает список курьеров
+    """
+    return CourierListResponse(couriers=await fetch_couriers())
+
+
+@app.post("/courier/available", response_model=CourierAvailableResponse)
+async def courier_available(
+    payload: CourierAvailableRequest,
+    request_id: str = Depends(get_request_id),
+    _=Depends(check_admin),
+) -> CourierAvailableResponse:
+    """
+    Отмечает курьера свободным (явился на точку) или недоступным
+    """
+    return await set_courier_available(payload.courier_id, payload.available)
+
+
 @app.post("/order/new", response_model=NewOrderResponse)
 async def new_order(
     payload: OrderRequest,
@@ -161,6 +217,24 @@ async def ready(
     Отмечает заказ готовым (статус ready)
     """
     return await ready_order(payload.id, request_id)
+
+
+@app.post("/order/dish/ready", response_model=DishReadyResponse)
+async def dish_ready(
+    payload: DishReadyRequest,
+    request_id: str = Depends(get_request_id),
+    _=Depends(check_admin),
+) -> DishReadyResponse:
+    """
+    Отмечает блюдо заказа приготовленным
+    """
+    try:
+        return await mark_dish_ready(payload.order_id, payload.dish_id)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
 
 
 @app.post("/order/attach", response_model=StatusResponse)

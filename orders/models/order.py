@@ -2,7 +2,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class ReceiptPosition(BaseModel):
@@ -39,6 +39,7 @@ class OrderDish(BaseModel):
     name: str
     cost: Decimal
     comment: str | None = None
+    ready: bool = False
 
 
 class StatusEvent(BaseModel):
@@ -83,3 +84,57 @@ class StatusResponse(BaseModel):
     order_id: int
     status: str
     changed_at: datetime
+
+
+class DishReadyRequest(BaseModel):
+    """
+    Отметка конкретного блюда заказа приготовленным
+    """
+    order_id: int
+    dish_id: int
+
+
+class DishReadyResponse(BaseModel):
+    order_id: int
+    dish_id: int
+    ready_at: datetime
+    all_ready: bool
+
+
+class OrderSummary(BaseModel):
+    """
+    Компактная карточка заказа для листинга и сборки контекста координатором
+    """
+    order_id: int
+    created_at: datetime
+    status: str = "new"
+    courier_id: int | None = None
+    dish_ids: list[int] = Field(default_factory=list)
+    ready_dish_ids: list[int] = Field(default_factory=list)
+
+
+class OrderListResponse(BaseModel):
+    orders: list[OrderSummary]
+
+
+class CourierRef(BaseModel):
+    courier_id: int
+    name: str | None = None
+    available: bool = False
+
+
+class CourierListResponse(BaseModel):
+    couriers: list[CourierRef]
+
+
+class CourierAvailableRequest(BaseModel):
+    """
+    Явка курьера на точку: available=true — свободен и готов брать заказы
+    """
+    courier_id: int
+    available: bool
+
+
+class CourierAvailableResponse(BaseModel):
+    courier_id: int
+    available: bool
